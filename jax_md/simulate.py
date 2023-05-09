@@ -580,6 +580,7 @@ def nvt_nose_hoover(energy_or_force_fn: Callable[..., Array],
     Journal of Physics A: Mathematical and General 39, no. 19 (2006): 5629.
   """
   force_fn = quantity.canonicalize_force(energy_or_force_fn)
+  print("FOO")
   dt = f32(dt)
   dt_2 = f32(dt / 2)
   if tau is None:
