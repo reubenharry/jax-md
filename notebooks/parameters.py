@@ -111,11 +111,8 @@ class Parameters:
         return exclusions
 
     def build_parameters(self, ff, mol, terms):
-        print('foo')
         uqatomtypes, indexes = np.unique(mol.atomtype, return_inverse=True)
-        print('baz')
         self.mapped_atom_types = np.array(indexes)
-        print('bar')
         # change point
         self.charges = np.array(mol.charge.astype(np.float64))
         self.masses = self.make_masses(ff, mol.atomtype)
