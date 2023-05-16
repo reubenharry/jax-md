@@ -21,6 +21,7 @@ from absl import logging
 
 from jax import grad, vmap, eval_shape
 from jax.tree_util import tree_map, tree_reduce
+from jax import grad, vmap, eval_shape
 import jax.numpy as jnp
 from jax import ops
 from jax import ShapeDtypeStruct

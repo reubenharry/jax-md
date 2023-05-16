@@ -23,6 +23,8 @@ import jax.numpy as jnp
 
 from jax import grad, jit, jacfwd
 
+from jax import test_util as jtu
+
 from jax_md import space, test_util, quantity, energy
 from jax_md.util import *
 

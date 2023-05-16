@@ -41,6 +41,7 @@ import functools
 
 from jax import grad
 from jax import jit
+from jax import ops
 from jax import random
 import jax.numpy as jnp
 from jax import lax

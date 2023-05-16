@@ -28,6 +28,7 @@ from jax_md import test_util
 from jax_md import energy
 from jax_md import partition
 from jax_md import smap
+from jax_md import space, quantity, test_util, energy
 from jax_md.util import *
 
 
