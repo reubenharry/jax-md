@@ -1542,6 +1542,19 @@ class Sampler:
         #V (momentum update)
         uu, r1 = self.update_momentum(eps * lambda_c, g * sigma, u)
 
+        # periodic boundary conditions
+        #  z_s = jnp.reshape(z, (-1,3))
+        # uu_s = jnp.reshape(uu, (-1,3))
+        # # eps_s = jnp.reshape(eps, (-1,3))
+        # # sigma_s = jnp.reshape(sigma, (-1,3))
+      
+
+
+        # # zz = jnp.reshape(self.shift_fn(z_s, (0.5 * jnp.reshape(eps, (-1,3)) * uu_s) / jnp.reshape(sigma, (-1,3))), (2064,))
+
+        # zz = jnp.reshape(jax.vmap(self.shift_fn)(z_s, (0.5 * uu_s)), (2064,))
+
+
         #T (postion update)
         zz = self.shift_fn(z, (0.5 * eps * uu) / sigma)
         xx = zz 
