@@ -1543,11 +1543,17 @@ class Sampler:
         # V T V T V
         # z = x / sigma # go to the latent space
 
+        import math
+
+        to_particles = lambda x : jnp.reshape(x, (-1, 3))
+        from_particles = lambda x : jnp.reshape(x, math.prod(x.shape))
+        shift = lambda x, y : from_particles(self.shift_fn(to_particles(x), to_particles(y)))
+
         #V (momentum update)
         uu, r1 = self.update_momentum(eps * lambda_c, g * sigma, u)
 
         #T (postion update)
-        xx = self.shift_fn(x, 0.5 * eps * uu * sigma)
+        xx = shift(x, 0.5 * eps * uu * sigma)
         # zz = z + 0.5 * eps * uu
         # xx = sigma * zz # go back to the configuration space
         ll, gg = self.Target.grad_nlogp(xx)
@@ -1556,7 +1562,7 @@ class Sampler:
         uu, r2 = self.update_momentum(eps * (1 - 2 * lambda_c), gg * sigma, uu)
 
         #T (postion update)
-        xx = self.shift_fn(xx, 0.5 * eps * uu * sigma)
+        xx = shift(xx, 0.5 * eps * uu * sigma)
         # zz = zz + 0.5 * eps * uu
         # xx = sigma * zz  # go back to the configuration space
         ll, gg = self.Target.grad_nlogp(xx)
@@ -1884,6 +1890,13 @@ class Sampler:
             x, u, l, g, E, key, time = state
             xx, uu, ll, gg, kinetic_change, key, time = self.dynamics(x, u, g, key, time, L, eps, sigma)
             EE = E + kinetic_change + ll - l
+            if self.Target.nbrs:
+                self.Target.nbrs = self.Target.nbrs.update(jnp.reshape(xx, (-1,3)), neighbor=self.Target.nbrs)
+            # self.Target.nbrs = jax.lax.cond(
+            #    self.Target.nbrs is None, 
+            #    lambda x : x, 
+            #    lambda x : x.update(xx, neighbor=x),
+            #     self.Target.nbrs )
             return (xx, uu, ll, gg, EE, key, time), (self.Target.transform(xx), ll, EE)
 
         if thinning == 1:

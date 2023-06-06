@@ -1,0 +1,280 @@
+\begin{thebibliography}{43}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Betancourt(2017)]{conceptualHMC}
+Michael Betancourt.
+\newblock A conceptual introduction to hamiltonian monte carlo.
+\newblock \emph{arXiv preprint arXiv:1701.02434}, 2017.
+
+\bibitem[Betancourt(2020)]{HierarchicalWebsite}
+Michael Betancourt.
+\newblock Hierarchical modeling, 2020.
+\newblock URL
+  \url{https://betanalpha.github.io/assets/case_studies/hierarchical_modeling.html}.
+\newblock Accessed on 2022-10-19.
+
+\bibitem[Bunimovich et~al.(1996)Bunimovich, Casati, and
+  Guarneri]{PhysRevLett.77.2941}
+L.~Bunimovich, G.~Casati, and I.~Guarneri.
+\newblock Chaotic focusing billiards in higher dimensions.
+\newblock \emph{Phys. Rev. Lett.}, 77:\penalty0 2941--2944, Sep 1996.
+\newblock \doi{10.1103/PhysRevLett.77.2941}.
+\newblock URL \url{https://link.aps.org/doi/10.1103/PhysRevLett.77.2941}.
+
+\bibitem[Chernov and Markarian(2006)]{billiards}
+Nikolai Chernov and Roberto Markarian.
+\newblock Chaotic billiards, volume 127 of mathematical surveys and monographs.
+\newblock \emph{American Mathematical Society, Providence, RI}, 2006.
+
+\bibitem[Cover and Thomas(2006)]{typical_set1}
+Thomas~M Cover and Joy~A Thomas.
+\newblock Elements of information theory 2nd edition (wiley series in
+  telecommunications and signal processing).
+\newblock \emph{Acessado em}, 2006.
+
+\bibitem[De~Luca and Silverstein(2022)]{BIoptimization}
+Giuseppe~Bruno De~Luca and Eva Silverstein.
+\newblock Born-infeld ({BI}) for {AI}: Energy-conserving descent ({ECD}) for
+  optimization.
+\newblock In \emph{Proceedings of the 39th International Conference on Machine
+  Learning}, volume 162 of \emph{Proceedings of Machine Learning Research},
+  pages 4918--4936. PMLR, 17--23 Jul 2022.
+\newblock URL \url{https://proceedings.mlr.press/v162/de-luca22a.html}.
+
+\bibitem[Di~Cairano et~al.(2021)Di~Cairano, Gori, Pettini, and
+  Pettini]{di2021hamiltonian}
+Loris Di~Cairano, Matteo Gori, Giulio Pettini, and Marco Pettini.
+\newblock Hamiltonian chaos and differential geometry of configuration
+  space--time.
+\newblock \emph{Physica D: Nonlinear Phenomena}, 422:\penalty0 132909, 2021.
+
+\bibitem[Dua and Graff(2017)]{GermanCreditData}
+Dheeru Dua and Casey Graff.
+\newblock {UCI} machine learning repository, 2017.
+\newblock URL \url{http://archive.ics.uci.edu/ml}.
+\newblock Accessed on 2022-10-19.
+
+\bibitem[Duane et~al.(1987)Duane, Kennedy, Pendleton, and Roweth]{HMCDuane}
+Simon Duane, Anthony~D Kennedy, Brian~J Pendleton, and Duncan Roweth.
+\newblock Hybrid monte carlo.
+\newblock \emph{Physics letters B}, 195\penalty0 (2):\penalty0 216--222, 1987.
+
+\bibitem[Geyer(2011)]{autocorr}
+Charles~J Geyer.
+\newblock Introduction to markov chain monte carlo.
+\newblock \emph{Handbook of markov chain monte carlo}, 20116022:\penalty0 45,
+  2011.
+
+\bibitem[Gibbons(2015)]{gibbons2015jacobi}
+GW~Gibbons.
+\newblock The jacobi metric for timelike geodesics in static spacetimes.
+\newblock \emph{Classical and Quantum Gravity}, 33\penalty0 (2):\penalty0
+  025004, 2015.
+
+\bibitem[Girolami and Calderhead(2011)]{riemannHMC}
+Mark Girolami and Ben Calderhead.
+\newblock Riemann manifold langevin and hamiltonian monte carlo methods.
+\newblock \emph{Journal of the Royal Statistical Society: Series B (Statistical
+  Methodology)}, 73\penalty0 (2):\penalty0 123--214, 2011.
+
+\bibitem[Goodman and Weare(2010)]{UsingBias}
+Jonathan Goodman and Jonathan Weare.
+\newblock Ensemble samplers with affine invariance.
+\newblock \emph{Communications in applied mathematics and computational
+  science}, 5\penalty0 (1):\penalty0 65--80, 2010.
+
+\bibitem[Grumitt et~al.(2022)Grumitt, Dai, and Seljak]{DLMC}
+Richard~DP Grumitt, Biwei Dai, and Uros Seljak.
+\newblock Deterministic langevin monte carlo with normalizing flows for
+  bayesian inference.
+\newblock \emph{arXiv preprint arXiv:2205.14240}, 2022.
+
+\bibitem[Haier et~al.(2006)Haier, Lubich, and
+  Wanner]{GeometricNumericalIntegration}
+Ernst Haier, Christian Lubich, and Gerhard Wanner.
+\newblock \emph{Geometric Numerical integration: structure-preserving
+  algorithms for ordinary differential equations}.
+\newblock Springer, 2006.
+
+\bibitem[Hoffman et~al.(2019)Hoffman, Sountsov, Dillon, Langmore, Tran, and
+  Vasudevan]{hoffmanGermanCredit}
+Matthew Hoffman, Pavel Sountsov, Joshua~V Dillon, Ian Langmore, Dustin Tran,
+  and Srinivas Vasudevan.
+\newblock Neutra-lizing bad geometry in hamiltonian monte carlo using neural
+  transport.
+\newblock \emph{arXiv preprint arXiv:1903.03704}, 2019.
+
+\bibitem[Hoffman et~al.(2021)Hoffman, Radul, and Sountsov]{ChEES}
+Matthew Hoffman, Alexey Radul, and Pavel Sountsov.
+\newblock An adaptive-mcmc scheme for setting trajectory lengths in hamiltonian
+  monte carlo.
+\newblock In \emph{International Conference on Artificial Intelligence and
+  Statistics}, pages 3907--3915. PMLR, 2021.
+
+\bibitem[Hoffman and Sountsov(2022)]{tuninggeneralizedHMC}
+Matthew~D Hoffman and Pavel Sountsov.
+\newblock Tuning-free generalized hamiltonian monte carlo.
+\newblock In \emph{International Conference on Artificial Intelligence and
+  Statistics}, pages 7799--7813. PMLR, 2022.
+
+\bibitem[Hoffman et~al.(2014)Hoffman, Gelman, et~al.]{NUTS}
+Matthew~D Hoffman, Andrew Gelman, et~al.
+\newblock The no-u-turn sampler: adaptively setting path lengths in hamiltonian
+  monte carlo.
+\newblock \emph{J. Mach. Learn. Res.}, 15\penalty0 (1):\penalty0 1593--1623,
+  2014.
+
+\bibitem[Horowitz(1991)]{generalizedHMC}
+Alan~M Horowitz.
+\newblock A generalized guided monte carlo algorithm.
+\newblock \emph{Physics Letters B}, 268\penalty0 (2):\penalty0 247--252, 1991.
+
+\bibitem[Jayawardana and Ohsawa(2021)]{SymmetricProjection}
+Buddhika Jayawardana and Tomoki Ohsawa.
+\newblock Semiexplicit symplectic integrators for non-separable hamiltonian
+  systems.
+\newblock \emph{arXiv preprint arXiv:2111.10915}, 2021.
+
+\bibitem[Jiang(2022)]{generalizedHMCproof}
+Qijia Jiang.
+\newblock On the dissipation of ideal hamiltonian monte carlo sampler.
+\newblock \emph{arXiv preprint arXiv:2209.07438}, 2022.
+
+\bibitem[J{\o}rgensen(1975)]{Jrgensen1975TheCL}
+Erik J{\o}rgensen.
+\newblock The central limit problem for geodesic random walks.
+\newblock \emph{Zeitschrift f{\"u}r Wahrscheinlichkeitstheorie und Verwandte
+  Gebiete}, 32:\penalty0 1--64, 1975.
+
+\bibitem[Kanazawa et~al.(2015)Kanazawa, Sano, Sagawa, and
+  Hayakawa]{PhysRevLett.114.090601}
+Kiyoshi Kanazawa, Tomohiko~G. Sano, Takahiro Sagawa, and Hisao Hayakawa.
+\newblock Minimal model of stochastic athermal systems: Origin of non-gaussian
+  noise.
+\newblock \emph{Phys. Rev. Lett.}, 114:\penalty0 090601, Mar 2015.
+\newblock \doi{10.1103/PhysRevLett.114.090601}.
+\newblock URL \url{https://link.aps.org/doi/10.1103/PhysRevLett.114.090601}.
+
+\bibitem[Krylov et~al.(1979)Krylov, Migdal, Sinai, and Zeeman]{krylov}
+N.S. Krylov, A.B. Migdal, Y.G. Sinai, and Y.L. Zeeman.
+\newblock \emph{Works on the Foundations of Statistical Physics}.
+\newblock Princeton Series in Physics. Books on Demand, 1979.
+\newblock ISBN 9780608064949.
+
+\bibitem[Leimkuhler and Matthews(2015)]{MolecularDynamics}
+Ben Leimkuhler and Charles Matthews.
+\newblock Molecular dynamics.
+\newblock \emph{Interdisciplinary applied mathematics}, 36, 2015.
+
+\bibitem[Leimkuhler and Reich(2004)]{SimulatingHamiltonianDynamics}
+Benedict Leimkuhler and Sebastian Reich.
+\newblock \emph{Simulating hamiltonian dynamics}.
+\newblock Number~14. Cambridge university press, 2004.
+
+\bibitem[MacKay et~al.(2003)MacKay, Mac~Kay, et~al.]{typical_set2}
+David~JC MacKay, David~JC Mac~Kay, et~al.
+\newblock \emph{Information theory, inference and learning algorithms}.
+\newblock Cambridge university press, 2003.
+
+\bibitem[Mathis et~al.(2021)Mathis, Mousatov, Panagopoulos, and
+  Silverstein]{Mathis:2020vdn}
+Dayshon Mathis, Alexandros Mousatov, George Panagopoulos, and Eva Silverstein.
+\newblock {A new branch of inflationary speed limits}.
+\newblock \emph{JHEP}, 10:\penalty0 199, 2021.
+\newblock \doi{10.1007/JHEP10(2021)199}.
+
+\bibitem[Neal et~al.(2011{\natexlab{a}})]{HMCneal}
+Radford~M Neal et~al.
+\newblock Mcmc using hamiltonian dynamics.
+\newblock \emph{Handbook of markov chain monte carlo}, 2\penalty0
+  (11):\penalty0 2, 2011{\natexlab{a}}.
+
+\bibitem[Neal et~al.(2011{\natexlab{b}})]{NealHandbook}
+Radford~M Neal et~al.
+\newblock Mcmc using hamiltonian dynamics.
+\newblock \emph{Handbook of markov chain monte carlo}, 2\penalty0
+  (11):\penalty0 2, 2011{\natexlab{b}}.
+
+\bibitem[Noether(1918)]{noether}
+E.~Noether.
+\newblock Invariante variationsprobleme.
+\newblock \emph{Nachrichten von der Gesellschaft der Wissenschaften zu
+  Göttingen, Mathematisch-Physikalische Klasse}, 1918:\penalty0 235--257,
+  1918.
+\newblock URL \url{http://eudml.org/doc/59024}.
+
+\bibitem[Omelyan et~al.(2003)Omelyan, Mryglod, and Folk]{MinimalNorm}
+IP~Omelyan, IM~Mryglod, and R~Folk.
+\newblock Symplectic analytically integrable decomposition algorithms:
+  classification, derivation, and application to molecular dynamics, quantum
+  and celestial mechanics simulations.
+\newblock \emph{Computer Physics Communications}, 151\penalty0 (3):\penalty0
+  272--314, 2003.
+
+\bibitem[Pettini(2007)]{pettini2007geometry}
+Marco Pettini.
+\newblock \emph{Geometry and topology in Hamiltonian dynamics and statistical
+  mechanics}, volume~33.
+\newblock Springer Science \& Business Media, 2007.
+
+\bibitem[Phan et~al.(2019)Phan, Pradhan, and Jankowiak]{NummPyro}
+Du~Phan, Neeraj Pradhan, and Martin Jankowiak.
+\newblock Composable effects for flexible and accelerated probabilistic
+  programming in numpyro.
+\newblock \emph{arXiv preprint arXiv:1912.11554}, 2019.
+
+\bibitem[Roberts and Ursell(1960)]{SphereRandomWalk}
+Paul~Harry Roberts and Harold~Douglas Ursell.
+\newblock Random walk on a sphere and on a riemannian manifold.
+\newblock \emph{Philosophical Transactions of the Royal Society of London.
+  Series A, Mathematical and Physical Sciences}, 252\penalty0 (1012):\penalty0
+  317--356, 1960.
+
+\bibitem[Rosenbrock(1960)]{rosenbrock}
+HoHo Rosenbrock.
+\newblock An automatic method for finding the greatest or least value of a
+  function.
+\newblock \emph{The computer journal}, 3\penalty0 (3):\penalty0 175--184, 1960.
+
+\bibitem[Seiler et~al.(2014)Seiler, Rubinstein-Salzedo, and
+  Holmes]{seiler2014positive}
+Christof Seiler, Simon Rubinstein-Salzedo, and Susan Holmes.
+\newblock Positive curvature and hamiltonian monte carlo.
+\newblock \emph{Advances in Neural Information Processing Systems}, 27, 2014.
+
+\bibitem[Sountsov et~al.(2020)Sountsov, Radul, and contributors]{inferencegym}
+Pavel Sountsov, Alexey Radul, and contributors.
+\newblock Inference gym, 2020.
+\newblock URL \url{https://pypi.org/project/inference_gym}.
+
+\bibitem[Sunada(1983)]{sunada1983mean}
+Toshikazu Sunada.
+\newblock Mean-value theorems and ergodicity of certain geodesic random walks.
+\newblock \emph{Compositio Mathematica}, 48\penalty0 (1):\penalty0 129--137,
+  1983.
+
+\bibitem[Takaishi and De~Forcrand(2006)]{MinimalNormQCD}
+Tetsuya Takaishi and Philippe De~Forcrand.
+\newblock Testing and tuning symplectic integrators for the hybrid monte carlo
+  algorithm in lattice qcd.
+\newblock \emph{Physical Review E}, 73\penalty0 (3):\penalty0 036706, 2006.
+
+\bibitem[Valva(2019)]{valva2019manifolds}
+Claire Valva.
+\newblock On manifolds of negative curvature, geodesic flow, and ergodicity,
+  2019.
+\newblock URL
+  \url{https://www.math.uchicago.edu/~may/REU2019/REUPapers/Valva.pdf}.
+\newblock Accessed on 2022-10-19.
+
+\bibitem[Ver~Steeg and Galstyan(2021)]{ESH}
+Greg Ver~Steeg and Aram Galstyan.
+\newblock Hamiltonian dynamics with non-newtonian momentum for rapid sampling.
+\newblock \emph{Advances in Neural Information Processing Systems},
+  34:\penalty0 11012--11025, 2021.
+
+\end{thebibliography}
