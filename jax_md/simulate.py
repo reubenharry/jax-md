@@ -2269,11 +2269,8 @@ def ess_corr(x):
 
 
 
-
-
-
-
 def bisection(f, a, b, tol=1e-3, max_iter=100):
+
     def cond_fn(inputs):
         a, b, _, iter_count = inputs
         return (jnp.abs(a - b) > tol * a) & (iter_count < max_iter)
@@ -2286,9 +2283,14 @@ def bisection(f, a, b, tol=1e-3, max_iter=100):
         #jax.debug.print("a: {}, b: {}, midpoint: {}, iter: {}", a, b, midpoint, iter_count)
         return a, b, midpoint, iter_count + 1
 
-    a, b, midpoint, iter_count = jax.lax.while_loop(cond_fn, body_fn, (a, b, 0.0, 0))
-    return midpoint
+    #a, b, midpoint, iter_count = jax.lax.while_loop(cond_fn, body_fn, (a, b, 0.0, 0))
+    # Use cond to decide which path to follow, note the condition is now f(b) <= 0
+    a, b, midpoint, iter_count = jax.lax.cond(f(b) <= 0, 
+                                              lambda _: (b, b, b, 0), 
+                                              lambda _: jax.lax.while_loop(cond_fn, body_fn, (a, b, 0.0, 0)), 
+                                              operand=())
 
+    return midpoint
 
 def systematic_resampling(logw, random_key):
     # Normalize weights
@@ -2336,10 +2338,6 @@ class SMCSampler:
 
         self.Target = vmap_target(Target)
 
-        to_particles = lambda x : jnp.reshape(x, (-1, 3))
-        from_particles = lambda x : jnp.reshape(x, math.prod(x.shape))
-        self.shift_fn = jax.vmap(lambda x, y : from_particles(shift_fn(to_particles(x), to_particles(y))))
-
         self.alpha = alpha
         self.L = jnp.sqrt(self.Target.d) * alpha
         self.varEwanted = varE_wanted
@@ -2385,13 +2383,10 @@ class SMCSampler:
     def hamiltonian_dynamics(self, x, u, g, key, eps, T):
         """leapfrog"""
 
-        
-
         # half step in momentum
         uu, delta_r1 = self.update_momentum(eps * 0.5, g / T, u)
 
         # full step in x
-        # xx = self.shift_fn(x, eps * uu)
         xx = x + eps * uu
         l, gg = self.Target.grad_nlogp(xx)
 
