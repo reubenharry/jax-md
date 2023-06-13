@@ -59,6 +59,8 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.fftpack import next_fast_len
 
+import math
+
 
 
 static_cast = util.static_cast
@@ -2338,6 +2340,11 @@ class SMCSampler:
 
         self.Target = vmap_target(Target)
 
+        # to_particles = lambda x : jnp.reshape(x, (-1, 3))
+        # from_particles = lambda x : jnp.reshape(x, math.prod(x.shape))
+        self.shift_fn = jax.vmap(shift_fn)
+        # (lambda x, y : from_particles(shift_fn(to_particles(x), to_particles(y))))
+
         self.alpha = alpha
         self.L = jnp.sqrt(self.Target.d) * alpha
         self.varEwanted = varE_wanted
@@ -2387,7 +2394,7 @@ class SMCSampler:
         uu, delta_r1 = self.update_momentum(eps * 0.5, g / T, u)
 
         # full step in x
-        xx = x + eps * uu
+        xx = self.shift_fn(x, eps * uu)
         l, gg = self.Target.grad_nlogp(xx)
 
         # half step in momentum
