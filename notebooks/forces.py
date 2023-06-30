@@ -2,10 +2,10 @@
 
 from scipy import constants as const
 # import torch
-import numpy as np
-import numpy.linalg as npl 
-import jax.numpy as nnp
-import jax.numpy.linalg as nnpl
+# import numpy as np
+# import numpy.linalg as npl 
+import jax.numpy as jaxnum
+import jax.numpy.linalg as jaxnuml
 import jax.lax as lnp
 import jax
 from math import pi
@@ -87,7 +87,7 @@ class Forces:
         #     )
 
         # todo: maybe inefficient
-        return jax.tree_map(lambda arr : (nnp.where(under_cutoff, arr.T, 0.0).T).astype(arr.dtype), arrays)
+        return jax.tree_map(lambda arr : (jaxnum.where(under_cutoff, arr.T, 0.0).T).astype(arr.dtype), arrays)
         # return jax.tree_map(lambda arr : arr[under_cutoff], arrays)
 
         
@@ -117,7 +117,7 @@ class Forces:
 
 
         nsystems = pos.shape[0]
-        # if nnp.any(np.isnan(pos)):
+        # if jaxnum.any(np.isnan(pos)):
         #     raise RuntimeError("Found NaN coordinates.")
 
         # pot = []
@@ -134,7 +134,7 @@ class Forces:
 
         
         spos = pos[0]
-        sbox = nnp.diagonal(box[0]) # box[0][np.array(nnp.eye(3), dtype=bool)]  # Use only the diagonal
+        sbox = jaxnum.diagonal(box[0]) # box[0][np.array(jaxnum.eye(3), dtype=bool)]  # Use only the diagonal
 
         # Bonded terms
         # TODO: We are for sure doing duplicate distance calculations here!
@@ -163,7 +163,7 @@ class Forces:
 
         
 
-            # return [nnp.sum(nnp.concatenate(list(pp.values()))) for pp in pot]
+            # return [jaxnum.sum(jaxnum.concatenate(list(pp.values()))) for pp in pot]
             
         if "angles" in self.energies and self.par.angles is not None:
             _, _, r21 = calculate_distances(spos, self.par.angles[:, [0, 1]], sbox)
@@ -211,7 +211,7 @@ class Forces:
                 E = evaluate_LJ_internal(
                     nb_dist, aa, bb, scnb, None, None
                 )
-                pot_lj = nnp.nansum(E)
+                pot_lj = jaxnum.nansum(E)
             else:
                 pot_lj = 0.0
 
@@ -290,7 +290,7 @@ class Forces:
                         self.switch_dist,
                         self.cutoff
                     )
-                    pot_lj2 = nnp.nansum(pot_lj2_unsummed)
+                    pot_lj2 = jaxnum.nansum(pot_lj2_unsummed)
                 else:
                     pot_lj2 = 0.0
 
@@ -359,46 +359,46 @@ class Forces:
         return pot
         # forces[:] = -jax.grad(
         #     enesum, pos)
-        # return nnp.sum(nnp.concatenate(list(pot[0].values())))
+        # return jaxnum.sum(jaxnum.concatenate(list(pot[0].values())))
 
 
     def _make_indeces(self, natoms, excludepairs, device):
-        fullmat = nnp.full((natoms, natoms), True, dtype=bool)
+        fullmat = jaxnum.full((natoms, natoms), True, dtype=bool)
         if len(excludepairs):
-            excludepairs = nnp.array(excludepairs)
+            excludepairs = jaxnum.array(excludepairs)
             # fullmat[excludepairs[:, 0], excludepairs[:, 1]] = False
             # fullmat[excludepairs[:, 1], excludepairs[:, 0]] = False
             fullmat = fullmat.at[excludepairs[:, 0], excludepairs[:, 1]].set(False)
             fullmat = fullmat.at[excludepairs[:, 1], excludepairs[:, 0]].set(False)
-        fullmat = nnp.triu(fullmat, +1)
-        allvsall_indeces = nnp.vstack(nnp.where(fullmat)).T
-        ava_idx = nnp.array(allvsall_indeces)
+        fullmat = jaxnum.triu(fullmat, +1)
+        allvsall_indeces = jaxnum.vstack(jaxnum.where(fullmat)).T
+        ava_idx = jaxnum.array(allvsall_indeces)
         return ava_idx
 
 
 def wrap_dist(dist, box):
     # return dist 
-    return jax.lax.cond(box is None or nnp.all(box == 0),
+    return jax.lax.cond(box is None or jaxnum.all(box == 0),
              
         lambda d : d, 
-        lambda d: d - nnp.expand_dims(box,0) * nnp.round(dist / nnp.expand_dims(box,0)),
+        lambda d: d - jaxnum.expand_dims(box,0) * jaxnum.round(dist / jaxnum.expand_dims(box,0)),
         dist)
     # else:
-    #     wdist = dist - nnp.expand_dims(box,0) * nnp.round(dist / nnp.expand_dims(box,0))
+    #     wdist = dist - jaxnum.expand_dims(box,0) * jaxnum.round(dist / jaxnum.expand_dims(box,0))
     # return wdist
 
 
 def calculate_distances(atom_pos, atom_idx, box):
     
     # direction_vec = wrap_dist(atom_pos[atom_idx[:, 0]] - atom_pos[atom_idx[:, 1]], box)
-    direction_vec = wrap_dist(nnp.take(atom_pos,atom_idx[:, 0], axis=0) - nnp.take(atom_pos, atom_idx[:, 1], axis=0), box)
+    direction_vec = wrap_dist(jaxnum.take(atom_pos,atom_idx[:, 0], axis=0) - jaxnum.take(atom_pos, atom_idx[:, 1], axis=0), box)
 
     # print(direction_vec, "DIR VEC")
     # print(atom_pos, "ATOM POS")
     # print(atom_idx, "ATOM IDX")
-    dist = nnpl.norm(direction_vec, axis=1)
+    dist = jaxnuml.norm(direction_vec, axis=1)
     # print(dist, 'DIST')
-    direction_unitvec = direction_vec / nnp.expand_dims(dist,1)
+    direction_unitvec = direction_vec / jaxnum.expand_dims(dist,1)
     return dist, direction_unitvec, direction_vec
 
 
@@ -411,11 +411,11 @@ ELEC_FACTOR *= const.Avogadro / (const.kilo * const.calorie)  # Convert J to kca
 def evaluate_LJ(
     dist, pair_indeces, atom_types, A, B, switch_dist, cutoff
 ):
-    atomtype_indices = nnp.take(atom_types, pair_indeces)
+    atomtype_indices = jaxnum.take(atom_types, pair_indeces)
     # print(" so far so good")
     aa = index_matrix(A, atomtype_indices[:, 0], atomtype_indices[:, 1])
     # print(aa.shape, atom_types.shape, A.shape, atomtype_indices[:, 1].shape)
-    # aa = nnp.take(A, nnp.take(atom_types, pair_indeces))[:, :2]
+    # aa = jaxnum.take(A, jaxnum.take(atom_types, pair_indeces))[:, :2]
     bb = index_matrix(B, atomtype_indices[:, 0], atomtype_indices[:, 1])
     
     # print("first")
@@ -437,10 +437,10 @@ def evaluate_LJ_internal(
     # TODO REMOVE
 
     def denan(arr):
-        out1 = nnp.where(nnp.isnan(arr), 0.0, arr)
-        return nnp.where(nnp.isinf(out1), 0.0, out1)
+        out1 = jaxnum.where(jaxnum.isnan(arr), 0.0, arr)
+        return jaxnum.where(jaxnum.isinf(out1), 0.0, out1)
 
-    rinv1 = nnp.where(nnp.isinf(1 / dist), 0.0, 1/dist)
+    rinv1 = jaxnum.where(jaxnum.isinf(1 / dist), 0.0, 1/dist)
 
     rinv3 = denan(rinv1*rinv1*rinv1)
     rinv6 = denan(rinv3*rinv3)
@@ -452,9 +452,9 @@ def evaluate_LJ_internal(
     if switch_dist is not None and cutoff is not None:
         mask = dist > switch_dist
         
-        t = ((nnp.where(mask, dist.T, 0.0).T) - switch_dist) / (cutoff - switch_dist)
+        t = ((jaxnum.where(mask, dist.T, 0.0).T) - switch_dist) / (cutoff - switch_dist)
         switch_val = 1 + t * t * t * (-10 + t * (15 - t * 6))
-        pot = nnp.where(mask, pot*switch_val, pot)
+        pot = jaxnum.where(mask, pot*switch_val, pot)
 
         
 
@@ -466,7 +466,7 @@ def evaluate_repulsion(
 ):  # LJ without B
     force = None
 
-    atomtype_indices = nnp.take(atom_types, pair_indeces)
+    atomtype_indices = jaxnum.take(atom_types, pair_indeces)
     aa = A[atomtype_indices[:, 0], atomtype_indices[:, 1]]
 
     rinv1 = 1 / dist
@@ -482,7 +482,7 @@ def evaluate_repulsion_CG(
 ):  # Repulsion like from CGNet
     force = None
 
-    atomtype_indices = nnp.take(atom_types, pair_indeces)
+    atomtype_indices = jaxnum.take(atom_types, pair_indeces)
     coef = B[atomtype_indices[:, 0], atomtype_indices[:, 1]]
 
     rinv1 = 1 / dist
@@ -512,7 +512,7 @@ def evaluate_electrostatics(
     # print("force error")
     # print(pair_indeces[:,0])
     # print(atom_charges.shape, pair_indeces[:,0].shape)
-    # print(nnp.take(atom_charges, pair_indeces[:,0]))
+    # print(jaxnum.take(atom_charges, pair_indeces[:,0]))
     # print("end force error")
     # force = None
     if rfa:  # Reaction field approximation for electrostatics with cutoff
@@ -524,8 +524,8 @@ def evaluate_electrostatics(
         crf = (1 / cutoff) * (3 * solventDielectric) / denom
         common = (
             ELEC_FACTOR
-            * nnp.take(atom_charges, pair_indeces[:,0])
-            * nnp.take(atom_charges, pair_indeces[:,1])
+            * jaxnum.take(atom_charges, pair_indeces[:,0])
+            * jaxnum.take(atom_charges, pair_indeces[:,1])
             / scale
         )
         dist2 = dist**2
@@ -534,8 +534,8 @@ def evaluate_electrostatics(
     else:
         pot = (
             ELEC_FACTOR
-            * nnp.take(atom_charges, pair_indeces[:,0])
-            * nnp.take(atom_charges, pair_indeces[:,1])
+            * jaxnum.take(atom_charges, pair_indeces[:,0])
+            * jaxnum.take(atom_charges, pair_indeces[:,1])
             / dist
             / scale
         )
@@ -558,13 +558,13 @@ def evaluate_angles(r21, r23, angle_params):
     k0 = angle_params[:, 0]
     theta0 = angle_params[:, 1]
 
-    dotprod = nnp.sum(r23 * r21, axis=1)
-    norm23inv = 1 / nnpl.norm(r23, axis=1)
-    norm21inv = 1 / nnpl.norm(r21, axis=1)
+    dotprod = jaxnum.sum(r23 * r21, axis=1)
+    norm23inv = 1 / jaxnuml.norm(r23, axis=1)
+    norm21inv = 1 / jaxnuml.norm(r21, axis=1)
 
     cos_theta = dotprod * norm21inv * norm23inv
-    cos_theta = nnp.clip(cos_theta, -1, 1)
-    theta = nnp.arccos(cos_theta)
+    cos_theta = jaxnum.clip(cos_theta, -1, 1)
+    theta = jaxnum.arccos(cos_theta)
 
     delta_theta = theta - theta0
     pot = k0 * delta_theta * delta_theta
@@ -575,20 +575,20 @@ def evaluate_angles(r21, r23, angle_params):
 
 def evaluate_torsion(r12, r23, r34, torsion_params):
     # Calculate dihedral angles from vectors
-    crossA = nnp.cross(r12, r23, axis=1)
-    crossB = nnp.cross(r23, r34, axis=1)
-    crossC = nnp.cross(r23, crossA, axis=1)
-    normA = nnpl.norm(crossA, axis=1)
-    normB = nnpl.norm(crossB, axis=1)
-    normC = nnpl.norm(crossC, axis=1)
-    normcrossB = crossB / nnp.expand_dims(normB,1)
-    cosPhi = nnp.sum(crossA * normcrossB, axis=1) / normA
-    sinPhi = nnp.sum(crossC * normcrossB, axis=1) / normC
-    phi = -nnp.arctan2(sinPhi, cosPhi)
+    crossA = jaxnum.cross(r12, r23, axis=1)
+    crossB = jaxnum.cross(r23, r34, axis=1)
+    crossC = jaxnum.cross(r23, crossA, axis=1)
+    normA = jaxnuml.norm(crossA, axis=1)
+    normB = jaxnuml.norm(crossB, axis=1)
+    normC = jaxnuml.norm(crossC, axis=1)
+    normcrossB = crossB / jaxnum.expand_dims(normB,1)
+    cosPhi = jaxnum.sum(crossA * normcrossB, axis=1) / normA
+    sinPhi = jaxnum.sum(crossC * normcrossB, axis=1) / normC
+    phi = -jaxnum.arctan2(sinPhi, cosPhi)
 
 
     ntorsions = len(torsion_params[0]["idx"])
-    pot = nnp.zeros(ntorsions, dtype=r12.dtype)
+    pot = jaxnum.zeros(ntorsions, dtype=r12.dtype)
 
     # print((torsion_params[0]["idx"].shape), torsion_params[1]["idx"].shape, "len torsion params")
     
@@ -600,19 +600,19 @@ def evaluate_torsion(r12, r23, r34, torsion_params):
 
 
 
-    # print(idx.shape, pot.shape, (k0 * (1 + nnp.cos(angleDiff))).shape, "idx and pot shape")
+    # print(idx.shape, pot.shape, (k0 * (1 + jaxnum.cos(angleDiff))).shape, "idx and pot shape")
 
     def amber(pot, idx, phi0, per, k0):
 
         angleDiff = per * phi[idx] - phi0
-        pot = pot.at[idx].add(k0 * (1 + nnp.cos(angleDiff)))
+        pot = pot.at[idx].add(k0 * (1 + jaxnum.cos(angleDiff)))
         return pot
 
     def charmm(pot, idx, phi0, per, k0):
         # todo finish
         angleDiff = phi[idx] - phi0
-        angleDiff = nnp.where(angleDiff < -pi, angleDiff, angleDiff + 2 * pi)
-        angleDiff = nnp.where(angleDiff > -pi, angleDiff, angleDiff - 2 * pi)
+        angleDiff = jaxnum.where(angleDiff < -pi, angleDiff, angleDiff + 2 * pi)
+        angleDiff = jaxnum.where(angleDiff > -pi, angleDiff, angleDiff - 2 * pi)
         # angleDiff[angleDiff < -pi] = angleDiff[angleDiff < -pi] + 2 * pi
         # angleDiff[angleDiff > pi] = angleDiff[angleDiff > pi] - 2 * pi
         pot = pot.at[idx].add(k0 * angleDiff**2)
@@ -626,8 +626,8 @@ def evaluate_torsion(r12, r23, r34, torsion_params):
         per = tp["params"][:, 2]
     
 
-        # print(nnp.all(per > 0), "bar")
-        new_pot = jax.lax.cond(nnp.all(per > 0),
+        # print(jaxnum.all(per > 0), "bar")
+        new_pot = jax.lax.cond(jaxnum.all(per > 0),
             lambda p : amber(p, idx, phi0, per, k0), 
             lambda p : charmm(p, idx, phi0, per, k0), pot)
 
@@ -638,9 +638,9 @@ def evaluate_torsion(r12, r23, r34, torsion_params):
         ])
 
 def index_matrix(mat,xi,yj):
-    rows = nnp.take(mat,xi, axis=0)
+    rows = jaxnum.take(mat,xi, axis=0)
     return jax.lax.scan(lambda i, row : (i+1, row[yj[i]]), 0, rows)[1]
 
 
 def infsum(arr):
-    return nnp.sum(nnp.where(nnp.isinf(arr), 0.0, arr ))
+    return jaxnum.sum(jaxnum.where(jaxnum.isinf(arr), 0.0, arr ))

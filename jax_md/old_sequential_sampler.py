@@ -2,19 +2,105 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .correlation_length import ess_corr
+# from jax_md.correlation_length import ess_corr
 
 
 jax.config.update('jax_enable_x64', True)
 
 lambda_c = 0.1931833275037836 #critical value of the lambda parameter for the minimal norm integrator
 
+def ess_corr(x):
+    """Taken from: https://blackjax-devs.github.io/blackjax/diagnostics.html
+        shape(x) = (num_samples, d)"""
+
+    input_array = jnp.array([x, ])
+
+    num_chains = 1#input_array.shape[0]
+    num_samples = input_array.shape[1]
+
+    mean_across_chain = input_array.mean(axis=1, keepdims=True)
+    # Compute autocovariance estimates for every lag for the input array using FFT.
+    centered_array = input_array - mean_across_chain
+    m = next_fast_len(2 * num_samples)
+    ifft_ary = jnp.fft.rfft(centered_array, n=m, axis=1)
+    ifft_ary *= jnp.conjugate(ifft_ary)
+    autocov_value = jnp.fft.irfft(ifft_ary, n=m, axis=1)
+    autocov_value = (
+        jnp.take(autocov_value, jnp.arange(num_samples), axis=1) / num_samples
+    )
+    mean_autocov_var = autocov_value.mean(0, keepdims=True)
+    mean_var0 = (jnp.take(mean_autocov_var, jnp.array([0]), axis=1) * num_samples / (num_samples - 1.0))
+    weighted_var = mean_var0 * (num_samples - 1.0) / num_samples
+    weighted_var = jax.lax.cond(
+        num_chains > 1,
+        lambda _: weighted_var+ mean_across_chain.var(axis=0, ddof=1, keepdims=True),
+        lambda _: weighted_var,
+        operand=None,
+    )
+
+    # Geyer's initial positive sequence
+    num_samples_even = num_samples - num_samples % 2
+    mean_autocov_var_tp1 = jnp.take(mean_autocov_var, jnp.arange(1, num_samples_even), axis=1)
+    rho_hat = jnp.concatenate([jnp.ones_like(mean_var0), 1.0 - (mean_var0 - mean_autocov_var_tp1) / weighted_var,], axis=1,)
+
+    rho_hat = jnp.moveaxis(rho_hat, 1, 0)
+    rho_hat_even = rho_hat[0::2]
+    rho_hat_odd = rho_hat[1::2]
+
+    mask0 = (rho_hat_even + rho_hat_odd) > 0.0
+    carry_cond = jnp.ones_like(mask0[0])
+    max_t = jnp.zeros_like(mask0[0], dtype=int)
+
+    def positive_sequence_body_fn(state, mask_t):
+        t, carry_cond, max_t = state
+        next_mask = carry_cond & mask_t
+        next_max_t = jnp.where(next_mask, jnp.ones_like(max_t) * t, max_t)
+        return (t + 1, next_mask, next_max_t), next_mask
+
+    (*_, max_t_next), mask = jax.lax.scan(
+        positive_sequence_body_fn, (0, carry_cond, max_t), mask0
+    )
+    indices = jnp.indices(max_t_next.shape)
+    indices = tuple([max_t_next + 1] + [indices[i] for i in range(max_t_next.ndim)])
+    rho_hat_odd = jnp.where(mask, rho_hat_odd, jnp.zeros_like(rho_hat_odd))
+    # improve estimation
+    mask_even = mask.at[indices].set(rho_hat_even[indices] > 0)
+    rho_hat_even = jnp.where(mask_even, rho_hat_even, jnp.zeros_like(rho_hat_even))
+
+    # Geyer's initial monotone sequence
+    def monotone_sequence_body_fn(rho_hat_sum_tm1, rho_hat_sum_t):
+        update_mask = rho_hat_sum_t > rho_hat_sum_tm1
+        next_rho_hat_sum_t = jnp.where(update_mask, rho_hat_sum_tm1, rho_hat_sum_t)
+        return next_rho_hat_sum_t, (update_mask, next_rho_hat_sum_t)
+
+    rho_hat_sum = rho_hat_even + rho_hat_odd
+    _, (update_mask, update_value) = jax.lax.scan(
+        monotone_sequence_body_fn, rho_hat_sum[0], rho_hat_sum
+    )
+
+    rho_hat_even_final = jnp.where(update_mask, update_value / 2.0, rho_hat_even)
+    rho_hat_odd_final = jnp.where(update_mask, update_value / 2.0, rho_hat_odd)
+
+    # compute effective sample size
+    ess_raw = num_chains * num_samples
+    tau_hat = (-1.0
+        + 2.0 * jnp.sum(rho_hat_even_final + rho_hat_odd_final, axis=0)
+        - rho_hat_even_final[indices]
+    )
+
+    tau_hat = jnp.maximum(tau_hat, 1 / np.log10(ess_raw))
+    ess = ess_raw / tau_hat
+
+    ### my part (combine all dimensions): ###
+    neff = ess.squeeze() / num_samples
+    return 1.0 / jnp.average(1 / neff)
+
 
 
 class Sampler:
     """the MCHMC (q = 0 Hamiltonian) sampler"""
 
-    def __init__(self, Target, L = None, eps = None,
+    def __init__(self, Target, shift_fn, masses, L = None, eps = None,
                  integrator = 'MN', varEwanted = 5e-4,
                  diagonal_preconditioning= True, sg = False,
                  frac_tune1 = 0.1, frac_tune2 = 0.1, frac_tune3 = 0.1):
@@ -41,6 +127,8 @@ class Sampler:
         """
 
         self.Target = Target
+        self.shift_fn = shift_fn
+        self.masses = masses
 
         ### integrator ###
         if integrator == "LF": #leapfrog (first updates the velocity)
@@ -137,14 +225,14 @@ class Sampler:
     def leapfrog(self, x, u, g, random_key, eps, sigma):
         """leapfrog"""
 
-        z = x / sigma # go to the latent space
+        # z = x / sigma # go to the latent space
 
         # half step in momentum
         uu, delta_r1 = self.update_momentum(eps * 0.5, g * sigma, u)
 
         # full step in x
-        zz = z + eps * uu
-        xx = sigma * zz # go back to the configuration space
+        # zz = 
+        xx = self.shift_fn(x, eps * uu * sigma) #  sigma * ((x / sigma) + eps * uu) # go back to the configuration space
         l, gg = self.Target.grad_nlogp(xx)
 
         # half step in momentum
@@ -177,14 +265,14 @@ class Sampler:
     def leapfrog_sg(self, x, u, g, random_key, eps, sigma, data):
         """leapfrog"""
 
-        z = x / sigma # go to the latent space
+        # z = x / sigma # go to the latent space
 
         # half step in momentum
         uu, delta_r1 = self.update_momentum(eps * 0.5, g * sigma, u)
 
         # full step in x
-        zz = z + eps * uu
-        xx = sigma * zz # go back to the configuration space
+        # zz = z + eps * uu
+        xx = self.shift_fn(x, eps * uu * sigma) # sigma * zz # go back to the configuration space
         l, gg = self.Target.grad_nlogp(xx, data)
 
         # half step in momentum
@@ -221,26 +309,26 @@ class Sampler:
         """Integrator from https://arxiv.org/pdf/hep-lat/0505020.pdf, see Equation 20."""
 
         # V T V T V
-        z = x / sigma # go to the latent space
+        # z = x / sigma # go to the latent space
 
         #V (momentum update)
         uu, r1 = self.update_momentum(eps * lambda_c, g * sigma, u)
 
         #T (postion update)
-        zz = z + 0.5 * eps * uu
-        xx = sigma * zz # go back to the configuration space
+        # zz = z + 0.5 * eps * uu
+        xx = self.shift_fn(x, 0.5 * eps * uu * sigma) # sigma * zz # go back to the configuration space
         ll, gg = self.Target.grad_nlogp(xx)
 
         #V (momentum update)
         uu, r2 = self.update_momentum(eps * (1 - 2 * lambda_c), gg * sigma, uu)
 
         #T (postion update)
-        zz = zz + 0.5 * eps * uu
-        xx = sigma * zz  # go back to the configuration space
+        # zz = zz + 0.5 * eps * uu
+        xx = self.shift_fn(xx, 0.5 * eps * uu * sigma)  # sigma * zz  # go back to the configuration space
         ll, gg = self.Target.grad_nlogp(xx)
 
         #V (momentum update)
-        uu, r3 = self.update_momentum(eps * lambda_c, gg, uu)
+        uu, r3 = self.update_momentum(eps * lambda_c, gg * sigma, uu)
 
         #kinetic energy change
         kinetic_change = (r1 + r2 + r3) * (self.Target.d-1)
@@ -397,7 +485,7 @@ class Sampler:
 
 
 
-    def sample(self, num_steps, num_chains = 1, x_initial = 'prior', random_key= None, output = 'normal', adaptive = False):
+    def sample(self, num_steps, num_chains = 1, x_initial = 'prior', random_key= None, output = 'normal', thinning= 1, adaptive = False):
         """Args:
                num_steps: number of integration steps to take.
 
@@ -421,12 +509,25 @@ class Sampler:
                         'ess': Effective Sample Size per gradient evaluation, float.
                             In this case, self.Target.variance = <x_i^2>_true should be defined.
 
+                thinning: only one every 'thinning' steps is stored. Defaults to 1.
+                        This is not the recommended solution to save memory. It is better to use the transform functionality.
+                        If this is not sufficient consider saving only the expected values, by setting output= 'expectation'.
+
                adaptive: use the adaptive step size for sampling. This is experimental and not well developed yet.
         """
 
         if num_chains == 1:
-            results = self.single_chain_sample(num_steps, x_initial, random_key, output, adaptive) #the function which actually does the sampling
+            results = self.single_chain_sample(num_steps, x_initial, random_key, output, thinning, adaptive) #the function which actually does the sampling
             if output == 'ess':
+                import matplotlib.pyplot as plt
+                plt.plot(jnp.sqrt(results))
+                plt.plot([0, len(results)], np.ones(2) * 0.1, '--', color='black', alpha=0.5)
+                plt.yscale('log')
+                plt.tight_layout()
+                plt.savefig('ess.png')
+                plt.close()
+                #plt.show()
+
                 cutoff_reached = results[-1] < 0.01
                 return (100.0 / (find_crossing(results, 0.01) * self.grad_evals_per_step)) * cutoff_reached
             else:
@@ -451,7 +552,7 @@ class Sampler:
                 keys = jax.random.split(key, num_chains)
 
 
-            f = lambda i: self.single_chain_sample(num_steps, x0[i], keys[i], output, adaptive)
+            f = lambda i: self.single_chain_sample(num_steps, x0[i], keys[i], output, thinning, adaptive)
 
             if num_cores != 1: #run the chains on parallel cores
                 parallel_function = jax.pmap(jax.vmap(f))
@@ -486,14 +587,14 @@ class Sampler:
 
 
 
-    def single_chain_sample(self, num_steps, x_initial, random_key, output, adaptive):
+    def single_chain_sample(self, num_steps, x_initial, random_key, output, thinning, adaptive):
         """sampling routine. It is called by self.sample"""
 
         ### initial conditions ###
         x, u, l, g, key = self.get_initial_conditions(x_initial, random_key)
         L, eps = self.L, self.eps #the initial values, given at the class initialization (or set to the default values)
 
-        sigma = jnp.ones(self.Target.d)  # no diagonal preconditioning
+        sigma = 1/jnp.sqrt(self.masses) 
 
         ### auto-tune the hyperparameters L and eps ###
         if self.frac_tune1 + self.frac_tune2 + self.frac_tune3 != 0.0:
@@ -524,7 +625,7 @@ class Sampler:
         else: #fixed stepsize
 
             if output == 'normal' or output == 'detailed':
-                X, _, E = self.sample_normal(num_steps, x, u, l, g, key, L, eps, sigma)
+                X, _, E = self.sample_normal(num_steps, x, u, l, g, key, L, eps, sigma, thinning)
                 if output == 'detailed':
                     return X, E, L, eps
                 else:
@@ -544,7 +645,7 @@ class Sampler:
 
     ### for loops which do the sampling steps: ###
 
-    def sample_normal(self, num_steps, x, u, l, g, random_key, L, eps, sigma):
+    def sample_normal(self, num_steps, x, u, l, g, random_key, L, eps, sigma, thinning):
         """Stores transform(x) for each step."""
         
         def step(state, useless):
@@ -554,10 +655,29 @@ class Sampler:
             EE = E + kinetic_change + ll - l
             return (xx, uu, ll, gg, EE, key, time), (self.Target.transform(xx), ll, EE)
 
-        state, track = jax.lax.scan(step, init=(x, u, l, g, 0.0, random_key, 0.0), xs=None, length=num_steps)
+        if thinning == 1:
+            return jax.lax.scan(step, init=(x, u, l, g, 0.0, random_key, 0.0), xs=None, length=num_steps)[1]
 
-        return track
-        # index_burnin = burn_in_ending(L)//thinning
+        else:
+            return self.sample_thinning(num_steps, x, u, l, g, random_key, L, eps, sigma, thinning)
+
+
+    def sample_thinning(self, num_steps, x, u, l, g, random_key, L, eps, sigma, thinning):
+        """Stores transform(x) for each step."""
+
+        def step(state, useless):
+
+            def substep(state, useless):
+                x, u, l, g, E, key, time = state
+                xx, uu, ll, gg, kinetic_change, key, time = self.dynamics(x, u, g, key, time, L, eps, sigma)
+                EE = E + kinetic_change + ll - l
+                return (xx, uu, ll, gg, EE, key, time), None
+
+            state = jax.lax.scan(substep, init=state, xs=None, length= thinning)[0] #do 'thinning' steps without saving
+
+            return state, (self.Target.transform(state[0]), state[2], state[4]) #save one sample
+
+        return jax.lax.scan(step, init=(x, u, l, g, 0.0, random_key, 0.0), xs=None, length= num_steps // thinning)[1]
 
 
 
@@ -591,8 +711,8 @@ class Sampler:
             F2 = (W * F2 + jnp.square(self.Target.transform(x))) / (W + 1)  # Update <f(x)> with a Kalman filter
             W += 1
             bias_d = jnp.square(F2 - self.Target.second_moments) / self.Target.variance_second_moments
-            bias = jnp.average(bias_d)
-            #bias = jnp.max(bias_d)
+            #bias = jnp.average(bias_d)
+            bias = jnp.max(bias_d)
 
             return ((x, u, ll, g, E + kinetic_change + ll - l, key, time), (W, F2)), bias
 
@@ -813,5 +933,3 @@ def my_while(cond_fun, body_fun, initial_state):
         state = body_fun(state)
 
     return state
-
-

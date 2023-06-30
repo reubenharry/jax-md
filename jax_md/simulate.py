@@ -58,6 +58,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.fftpack import next_fast_len
+import scipy
 
 import math
 
@@ -590,7 +591,6 @@ def nvt_nose_hoover(energy_or_force_fn: Callable[..., Array],
     Journal of Physics A: Mathematical and General 39, no. 19 (2006): 5629.
   """
   force_fn = quantity.canonicalize_force(energy_or_force_fn)
-  print("FOO")
   dt = f32(dt)
   dt_2 = f32(dt / 2)
   if tau is None:
@@ -1325,11 +1325,94 @@ jax.config.update('jax_enable_x64', True)
 
 lambda_c = 0.1931833275037836 #critical value of the lambda parameter for the minimal norm integrator
 
+def update_momentum(d, eps):
+    
+  def update(u, g):
+      """The momentum updating map of the esh dynamics (see https://arxiv.org/pdf/2111.02434.pdf)
+      similar to the implementation: https://github.com/gregversteeg/esh_dynamics
+      There are no exponentials e^delta, which prevents overflows when the gradient norm is large."""
+      g_norm = jnp.sqrt(jnp.sum(jnp.square(g)))
+      e = - g / g_norm
+      ue = jnp.dot(u, e)
+      delta = eps * g_norm / (d-1)
+      zeta = jnp.exp(-delta)
+      uu = e *(1-zeta)*(1+zeta + ue * (1-zeta)) + 2*zeta* u
+      delta_r = delta - jnp.log(2) + jnp.log(1 + ue + (1-ue)*zeta**2)
+      return uu/jnp.sqrt(jnp.sum(jnp.square(uu))), delta_r
+  
+  return update
+
+def update_position(eps, u, shift, grad_nlogp):
+  def update(x):
+    xx = shift(x, 0.5 * eps * u)
+    ll, gg = grad_nlogp(xx)
+    return xx, ll, gg
+  return update
 
 
-lambda_c = 0.1931833275037836 #critical value of the lambda parameter for the minimal norm integrator
+# def random_unit_vector(d, random_key, num_chains):
+#     """Generates a random (isotropic) unit vector."""
+#     key, subkey = jax.random.split(random_key)
+#     u = jax.random.normal(subkey, shape = (num_chains, d), dtype = 'float64')
+#     normed_u = u / jnp.sqrt(jnp.sum(jnp.square(u), axis = 1))[:, None]
+#     return normed_u, key
 
+def random_unit_vector(d):
+    def given_key(random_key):
+        """Generates a random (isotropic) unit vector."""
+        key, subkey = jax.random.split(random_key)
+        u = jax.random.normal(subkey, shape = (d, ), dtype = 'float64')
+        u /= jnp.sqrt(jnp.sum(jnp.square(u)))
+        return u, key
+    return given_key
 
+def minimal_norm(d, shift, grad_nlogp, eps, sigma):
+      def step(u,x,g):
+        
+          """Integrator from https://arxiv.org/pdf/hep-lat/0505020.pdf, see Equation 20."""
+
+          # V T V T V
+          uu, r1 = update_momentum(d, eps * lambda_c)(u, g * sigma)
+          xx, ll, gg = update_position(eps, uu*sigma, shift, grad_nlogp)(x)
+          uu, r2 = update_momentum(d, eps * (1 - 2 * lambda_c))(uu, gg * sigma)
+          xx, ll, gg = update_position(eps, uu*sigma, shift, grad_nlogp)(xx)
+          uu, r3 = update_momentum(d, eps * lambda_c)(uu, gg * sigma)
+
+          #kinetic energy change
+          kinetic_change = (r1 + r2 + r3) * (d-1)
+
+          return xx, uu, ll, gg, kinetic_change
+      return step
+
+def leapfrog(d, shift, grad_nlogp, eps, sigma):
+      def step(u,x,g):
+        """leapfrog"""
+
+        # z = x / sigma # go to the latent space
+
+        # half step in momentum
+        uu, delta_r1 = update_momentum(d, eps * 0.5)(u, g * sigma)
+
+        # full step in x
+        xx = shift(x, eps * uu*sigma )
+        # xx = sigma * zz # go back to the configuration space
+        l, gg = grad_nlogp(xx)
+
+        # half step in momentum
+        uu, delta_r2 = update_momentum(d, eps * 0.5)(uu, gg * sigma)
+        kinetic_change = (delta_r1 + delta_r2) * (d-1)
+
+        return xx, uu, l, gg, kinetic_change
+      return step
+
+def partially_refresh_momentum(d, nu):
+    def func(u, random_key):
+      """Adds a small noise to u and normalizes."""
+      key, subkey = jax.random.split(random_key)
+      z = nu * jax.random.normal(subkey, shape = (d, ), dtype = 'float64')
+
+      return (u + z) / jnp.sqrt(jnp.sum(jnp.square(u + z))), key
+    return func 
 
 class Sampler:
     """the MCHMC (q = 0 Hamiltonian) sampler"""
@@ -1361,23 +1444,12 @@ class Sampler:
         """
 
         self.Target = Target
-        self.shift_fn = shift_fn
+        to_particles = lambda x : jnp.reshape(x, (-1, 3))
+        from_particles = lambda x : jnp.reshape(x, math.prod(x.shape))
+        self.shift = lambda x, y : from_particles(shift_fn(to_particles(x), to_particles(y)))
         self.masses = masses
 
-        ### integrator ###
-        if integrator == "LF": #leapfrog (first updates the velocity)
-            self.hamiltonian_dynamics = self.leapfrog
-            self.grad_evals_per_step = 1.0
-
-        elif integrator== 'MN': #minimal norm integrator (velocity)
-            self.hamiltonian_dynamics = self.minimal_norm
-            self.grad_evals_per_step = 2.0
-        # elif integrator == 'RM':
-        #     self.hamiltonian_dynamics = self.randomized_midpoint
-        #     self.grad_evals_per_step = 1.0
-        else:
-            raise ValueError('integrator = ' + integrator + 'is not a valid option.')
-
+        self.integrator = integrator
 
         ### option of stochastic gradient ###
         self.sg = sg
@@ -1413,20 +1485,9 @@ class Sampler:
 
 
 
-    def random_unit_vector(self, random_key):
-        """Generates a random (isotropic) unit vector."""
-        key, subkey = jax.random.split(random_key)
-        u = jax.random.normal(subkey, shape = (self.Target.d, ), dtype = 'float64')
-        u /= jnp.sqrt(jnp.sum(jnp.square(u)))
-        return u, key
 
 
-    def partially_refresh_momentum(self, u, nu, random_key):
-        """Adds a small noise to u and normalizes."""
-        key, subkey = jax.random.split(random_key)
-        z = nu * jax.random.normal(subkey, shape = (self.Target.d, ), dtype = 'float64')
-
-        return (u + z) / jnp.sqrt(jnp.sum(jnp.square(u + z))), key
+    
 
     # naive update
     # def update_momentum(self, eps, g, u):
@@ -1442,59 +1503,8 @@ class Sampler:
     #     return (u + e * (sh + ue * (ch - 1))) / (ch + ue * sh), delta_r
 
 
-    def update_momentum(self, eps, g, u):
-        """The momentum updating map of the esh dynamics (see https://arxiv.org/pdf/2111.02434.pdf)
-        similar to the implementation: https://github.com/gregversteeg/esh_dynamics
-        There are no exponentials e^delta, which prevents overflows when the gradient norm is large."""
-        g_norm = jnp.sqrt(jnp.sum(jnp.square(g)))
-        e = - g / g_norm
-        ue = jnp.dot(u, e)
-        delta = eps * g_norm / (self.Target.d-1)
-        zeta = jnp.exp(-delta)
-        uu = e *(1-zeta)*(1+zeta + ue * (1-zeta)) + 2*zeta* u
-        delta_r = delta - jnp.log(2) + jnp.log(1 + ue + (1-ue)*zeta**2)
-        return uu/jnp.sqrt(jnp.sum(jnp.square(uu))), delta_r
 
 
-    def leapfrog(self, x, u, g, random_key, eps, sigma):
-        """leapfrog"""
-
-        z = x / sigma # go to the latent space
-
-        # half step in momentum
-        uu, delta_r1 = self.update_momentum(eps * 0.5, g * sigma, u)
-
-        # full step in x
-        zz = z + eps * uu
-        xx = sigma * zz # go back to the configuration space
-        l, gg = self.Target.grad_nlogp(xx)
-
-        # half step in momentum
-        uu, delta_r2 = self.update_momentum(eps * 0.5, gg * sigma, uu)
-        kinetic_change = (delta_r1 + delta_r2) * (self.Target.d-1)
-
-        return xx, uu, l, gg, kinetic_change, random_key
-
-    # def leapfrog(self, x, u, g, random_key, eps, sigma):
-    #     """leapfrog"""
-    #
-    #     z = x / sigma  # go to the latent space
-    #
-    #     # half step in x
-    #     zz = z + 0.5 * eps * u
-    #     l, gg = self.Target.grad_nlogp(sigma * zz)
-    #
-    #     # full step in momentum
-    #     uu, delta_r = self.update_momentum(eps, gg * sigma, u)
-    #
-    #     # half step in x
-    #     zz += 0.5 * eps * uu
-    #     xx = sigma * zz  # go back to the configuration space
-    #
-    #     l = self.Target.nlogp(xx)
-    #     kinetic_change = delta_r * (self.Target.d - 1)
-    #
-    #     return xx, uu, l, gg, kinetic_change, random_key
 
     def leapfrog_sg(self, x, u, g, random_key, eps, sigma, data):
         """leapfrog"""
@@ -1502,7 +1512,7 @@ class Sampler:
         z = x / sigma # go to the latent space
 
         # half step in momentum
-        uu, delta_r1 = self.update_momentum(eps * 0.5, g * sigma, u)
+        uu, delta_r1 = update_momentum(self.target.d, eps * 0.5, g * sigma, u)
 
         # full step in x
         zz = z + eps * uu
@@ -1510,7 +1520,7 @@ class Sampler:
         l, gg = self.Target.grad_nlogp(xx, data)
 
         # half step in momentum
-        uu, delta_r2 = self.update_momentum(eps * 0.5, gg * sigma, uu)
+        uu, delta_r2 = update_momentum(self.target.d, eps * 0.5, gg * sigma, uu)
         kinetic_change = (delta_r1 + delta_r2) * (self.Target.d-1)
 
         return xx, uu, l, gg, kinetic_change, random_key
@@ -1539,71 +1549,32 @@ class Sampler:
 
 
 
-    def minimal_norm(self, x, u, g, random_key, eps, sigma):
-        """Integrator from https://arxiv.org/pdf/hep-lat/0505020.pdf, see Equation 20."""
+    
+      
 
-        # V T V T V
-        # z = x / sigma # go to the latent space
+    # def minimal_norm(self, x, u, g, eps, sigma):
+    #     """Integrator from https://arxiv.org/pdf/hep-lat/0505020.pdf, see Equation 20."""
 
-        import math
+    #     # V T V T V
+    #     uu, r1 = update_momentum(self.Target.d, eps * lambda_c, g * sigma)(u)
+    #     xx, ll, gg = update_position(eps, uu*sigma, self.shift, self.Target.grad_nlogp)(x)
+    #     uu, r2 = update_momentum(self.Target.d, eps * (1 - 2 * lambda_c), gg * sigma)(uu)
+    #     xx, ll, gg = update_position(eps, uu*sigma, self.shift, self.Target.grad_nlogp)(xx)
+    #     uu, r3 = update_momentum(self.Target.d, eps * lambda_c, gg)(uu)
 
-        to_particles = lambda x : jnp.reshape(x, (-1, 3))
-        from_particles = lambda x : jnp.reshape(x, math.prod(x.shape))
-        shift = lambda x, y : from_particles(self.shift_fn(to_particles(x), to_particles(y)))
+    #     #kinetic energy change
+    #     kinetic_change = (r1 + r2 + r3) * (self.Target.d-1)
 
-        #V (momentum update)
-        uu, r1 = self.update_momentum(eps * lambda_c, g * sigma, u)
-
-        #T (postion update)
-        xx = shift(x, 0.5 * eps * uu * sigma)
-        # zz = z + 0.5 * eps * uu
-        # xx = sigma * zz # go back to the configuration space
-        ll, gg = self.Target.grad_nlogp(xx)
-
-        #V (momentum update)
-        uu, r2 = self.update_momentum(eps * (1 - 2 * lambda_c), gg * sigma, uu)
-
-        #T (postion update)
-        xx = shift(xx, 0.5 * eps * uu * sigma)
-        # zz = zz + 0.5 * eps * uu
-        # xx = sigma * zz  # go back to the configuration space
-        ll, gg = self.Target.grad_nlogp(xx)
-
-        #V (momentum update)
-        uu, r3 = self.update_momentum(eps * lambda_c, gg, uu)
-
-        #kinetic energy change
-        kinetic_change = (r1 + r2 + r3) * (self.Target.d-1)
-
-        return xx, uu, ll, gg, kinetic_change, random_key
-
-
-    #
-    # def randomized_midpoint(self, x, u, g, r, key):
-    #
-    #     key1, key2 = jax.random.split(key)
-    #
-    #     xx = x + jax.random.uniform(key2) * self.eps * u
-    #
-    #     gg = self.Target.grad_nlogp(xx)
-    #
-    #     uu, r1 = self.update_momentum(self.eps, gg, u)
-    #
-    #     xx = self.update_position_RM(xx, )
-    #
-    #
-    #     return xx, uu, gg, r1 * (self.Target.d-1), key1
-
-
+    #     return xx, uu, ll, gg, kinetic_change
 
     def dynamics_bounces(self, x, u, g, random_key, time, L, eps, sigma):
         """One step of the dynamics (with bounces)"""
 
         # Hamiltonian step
-        xx, uu, ll, gg, kinetic_change, key = self.hamiltonian_dynamics(x, u, g, random_key, eps, sigma)
+        xx, uu, ll, gg, kinetic_change = self.hamiltonian_dynamics(x, u, g, eps, sigma)
 
         # bounce
-        u_bounce, key = self.random_unit_vector(key)
+        u_bounce, key = random_unit_vector(self.Target.d)(random_key)
         time += eps
         do_bounce = time > L
         time = time * (1 - do_bounce)  # reset time if the bounce is done
@@ -1615,12 +1586,40 @@ class Sampler:
     def dynamics_generalized(self, x, u, g, random_key, time, L, eps, sigma):
         """One step of the generalized dynamics."""
 
+      ### integrator ###
+        if self.integrator == "LF": #leapfrog (first updates the velocity)
+            hamiltonian_dynamics = leapfrog(eps=eps, 
+                                                      sigma=sigma, 
+                                                      grad_nlogp=self.Target.grad_nlogp,
+                                                      shift=self.shift,
+                                                      d=self.Target.d
+                                                      )
+            self.grad_evals_per_step = 1.0
+
+        elif self.integrator== 'MN': #minimal norm integrator (velocity)
+            # jax.debug.print("eps {}\n sigma ={}\n grad_nlogp(1)={}\n x {}", eps, sigma, self.Target.grad_nlogp(x), x)
+
+            hamiltonian_dynamics = minimal_norm(eps=eps, 
+                                                      sigma=sigma, 
+                                                      grad_nlogp=self.Target.grad_nlogp,
+                                                      shift=self.shift,
+                                                      d=self.Target.d
+                                                      )
+            self.grad_evals_per_step = 2.0
+        # # elif integrator == 'RM':
+        # #     self.hamiltonian_dynamics = self.randomized_midpoint
+        # #     self.grad_evals_per_step = 1.0
+        # else:
+        #     raise ValueError('integrator = ' + integrator + 'is not a valid option.')
+
+
+
         # Hamiltonian step
-        xx, uu, ll, gg, kinetic_change, key = self.hamiltonian_dynamics(x, u, g, random_key, eps, sigma)
+        xx, uu, ll, gg, kinetic_change = hamiltonian_dynamics(x=x,u=u,g=g)  # self.hamiltonian_dynamics(x, u, g, eps, sigma)
 
         # Langevin-like noise
         nu = jnp.sqrt((jnp.exp(2 * eps / L) - 1.0) / self.Target.d)
-        uu, key = self.partially_refresh_momentum(uu, nu, key)
+        uu, key = partially_refresh_momentum(d=self.Target.d, nu=nu)(u=uu, random_key=random_key)
 
         return xx, uu, ll, gg, kinetic_change, key, time + eps
 
@@ -1642,7 +1641,8 @@ class Sampler:
 
             # Langevin-like noise
             nu = jnp.sqrt((jnp.exp(2 * eps / L) - 1.0) / self.Target.d)
-            uu, key = self.partially_refresh_momentum(uu, nu, key)
+            uu, key =  partially_refresh_momentum(d=self.Target.d, nu=nu)(u=uu, random_key=key)
+            
 
             return (xx, uu, ll, gg, key, K + dK, t + eps), None
 
@@ -1720,7 +1720,7 @@ class Sampler:
         else:
             l, g = self.Target.grad_nlogp(x)
 
-        u, key = self.random_unit_vector(key)
+        u, key = random_unit_vector(self.Target.d)(key)
         #u = - g / jnp.sqrt(jnp.sum(jnp.square(g))) #initialize momentum in the direction of the gradient of log p
 
         return x, u, l, g, key
@@ -1864,6 +1864,7 @@ class Sampler:
         else: #fixed stepsize
 
             if output == 'normal' or output == 'detailed':
+                # jax.debug.print("x {}\n\n", x)
                 X, _, E = self.sample_normal(num_steps, x, u, l, g, key, L, eps, sigma, thinning)
                 if output == 'detailed':
                     return X, E, L, eps
@@ -1890,8 +1891,14 @@ class Sampler:
         def step(state, useless):
 
             x, u, l, g, E, key, time = state
+            # jax.debug.print("l {}", l)
+            jax.debug.print("Energy is \n {}", E)
+            # jax.debug.print("Energy is \n {}", E)
             xx, uu, ll, gg, kinetic_change, key, time = self.dynamics(x, u, g, key, time, L, eps, sigma)
+            # jax.debug.print("ll {}", ll)
+            # jax.debug.print("kinetic change {}", kinetic_change)
             EE = E + kinetic_change + ll - l
+
             if self.Target.nbrs:
                 self.Target.nbrs = self.Target.nbrs.update(jnp.reshape(xx, (-1,3)), neighbor=self.Target.nbrs)
             # self.Target.nbrs = jax.lax.cond(
@@ -1902,6 +1909,7 @@ class Sampler:
             return (xx, uu, ll, gg, EE, key, time), (self.Target.transform(xx), ll, EE)
 
         if thinning == 1:
+            # jax.debug.print("initial x {}", x)
             return jax.lax.scan(step, init=(x, u, l, g, 0.0, random_key, 0.0), xs=None, length=num_steps)[1]
 
         else:
@@ -2328,6 +2336,17 @@ class vmap_target:
             self.prior_draw = jax.vmap(target.prior_draw)
 
 
+def resample_particles(logw, x, u, l, g, key, L, eps, T):
+
+            indices, key = systematic_resampling(logw, key)
+
+            x_resampled = jnp.take(x, indices, axis=0)
+            u_resampled = jnp.take(u, indices, axis=0)
+            l_resampled = jnp.take(l, indices)
+            g_resampled = jnp.take(g, indices, axis=0)
+
+            return (x_resampled, u_resampled, l_resampled, g_resampled, key, L, eps, T)
+
 class SMCSampler:
     """Ensamble MCHMC (q = 0 Hamiltonian) sampler"""
 
@@ -2354,20 +2373,15 @@ class SMCSampler:
         self.eps_initial = jnp.sqrt(self.Target.d)    # this will be changed during the burn-in
 
 
-    def random_unit_vector(self, random_key, num_chains):
-        """Generates a random (isotropic) unit vector."""
-        key, subkey = jax.random.split(random_key)
-        u = jax.random.normal(subkey, shape = (num_chains, self.Target.d), dtype = 'float64')
-        normed_u = u / jnp.sqrt(jnp.sum(jnp.square(u), axis = 1))[:, None]
-        return normed_u, key
+    
 
 
-    def partially_refresh_momentum(self, u, random_key, nu):
-        """Adds a small noise to u and normalizes."""
-        key, subkey = jax.random.split(random_key)
-        noise = nu * jax.random.normal(subkey, shape= u.shape, dtype=u.dtype)
+    # def partially_refresh_momentum(self, u, random_key, nu):
+    #     """Adds a small noise to u and normalizes."""
+    #     key, subkey = jax.random.split(random_key)
+    #     noise = nu * jax.random.normal(subkey, shape= u.shape, dtype=u.dtype)
 
-        return (u + noise) / jnp.sqrt(jnp.sum(jnp.square(u + noise), axis = 1))[:, None], key
+    #     return (u + noise) / jnp.sqrt(jnp.sum(jnp.square(u + noise), axis = 1))[:, None], key
 
 
 
@@ -2408,11 +2422,263 @@ class SMCSampler:
         """One step of the generalized dynamics."""
 
         # Hamiltonian step
-        xx, uu, ll, gg, kinetic_change, key = self.hamiltonian_dynamics(x, u, g, random_key, eps, T)
+        xx, uu, ll, gg, kinetic_change = self.hamiltonian_dynamics(x, u, g, eps, T)
 
         # bounce
         nu = jnp.sqrt((jnp.exp(2 * eps / L) - 1.0) / self.Target.d)
-        uu, key = self.partially_refresh_momentum(uu, key, nu)
+        uu, key =  jax.vmap(partially_refresh_momentum(d=self.Target.d, nu=nu))(u=uu, random_key=random_key) 
+        # self.partially_refresh_momentum(uu, random_key, nu)
+
+        return xx, uu, ll, gg, kinetic_change, key
+
+
+    def initialize(self, random_key, x_initial, num_chains):
+
+
+        if random_key is None:
+            key = jax.random.PRNGKey(0)
+        else:
+            key = random_key
+
+        if isinstance(x_initial, str):
+            if x_initial == 'prior':  # draw the initial x from the prior
+                keys_all = jax.random.split(key, num_chains + 1)
+                x = self.Target.prior_draw(keys_all[1:])
+                key = keys_all[0]
+
+            else:  # if not 'prior' the x_initial should specify the initial condition
+                raise KeyError('x_initial = "' + x_initial + '" is not a valid argument. \nIf you want to draw initial condition from a prior use x_initial = "prior", otherwise specify the initial condition with an array')
+
+        else:  # initial x is given
+            x = jnp.copy(x_initial)
+
+        l, g = self.Target.grad_nlogp(x)
+
+
+        ### initial velocity ###
+        u, key = random_unit_vector(self.Target.d, key, num_chains)  # random velocity orientations
+
+
+        return x, u, l, g, key
+
+
+
+    def sample_temp_level(self, num_steps, tune_steps, x0, u0, l0, g0, key0, L0, eps0, T):
+
+
+        def step(state, tune):
+
+            x, u, l, g, key, L, eps = state 
+            x, u, ll, g, kinetic_change, key = self.dynamics(x, u, g, key, L, eps, T)  # update particles by one step
+            
+
+
+            ### eps tuning ###
+            de = jnp.square(kinetic_change + ll - l) / self.Target.d #square energy error per dimension
+            varE = jnp.average(de) #averaged over the ensamble
+
+                                #if we are in the tuning phase            #else
+            eps *= (tune * jnp.power(varE / self.varEwanted, -1./6.) + (1-tune))
+
+
+            ### L tuning ###
+            #typical width of the posterior
+            moment1 = jnp.average(x, axis=0)
+            moment2 = jnp.average(jnp.square(x), axis = 0)
+            var= moment2 - jnp.square(moment1)
+            sig = jnp.sqrt(jnp.average(var)) # average over dimensions (= typical width of the posterior)
+
+            Lnew = self.alpha * sig * jnp.sqrt(self.Target.d)
+            L = tune * Lnew + (1-tune) * L #update L if we are in the tuning phase
+            
+
+            return (x, u, ll, g, key, L, eps), x
+
+
+                                                #tuning                     #no tuning
+        tune_schedule = jnp.concatenate((jnp.ones(tune_steps), jnp.zeros(num_steps - tune_steps)))
+
+        return jax.lax.scan(step, init= (x0, u0, l0, g0, key0, L0, eps0), xs= tune_schedule, length= num_steps)
+
+
+
+
+    def sample(self, steps_at_each_temp, tune_steps, num_chains, temp_init, temp_final, ess, x_initial= 'prior', random_key= None):
+
+        x0, u0, l0, g0, key0 = self.initialize(random_key, x_initial, num_chains) #initialize the chains
+
+        T0 = temp_init
+
+        def not_terminate(state):
+            x, u, l, g, key, L, eps, Tprev = state
+            return jnp.abs(Tprev-temp_final) > 1e-2
+        
+        def update_temp_and_compute_logw(state):
+            x, u, l, g, key, L, eps, Tprev = state
+
+            def solve_ess(beta):
+                logw = -(beta - 1.0/Tprev) * l 
+                weights = jnp.exp(logw - jax.scipy.special.logsumexp(logw))
+                #jax.debug.print("estimate: {}, ess: {}", 1.0 / jnp.sum(weights**2) / len(weights), ess)
+                return ess * len(weights) - 1.0 / jnp.sum(weights**2)
+
+            beta = bisection(solve_ess, 1.0/Tprev, 1.0/temp_final)
+            T = 1.0 / beta
+
+            logw = -(beta - 1.0/Tprev) * l
+
+            return T, logw
+        
+        
+
+
+        def temp_level(state):
+            x, u, l, g, key, L, eps, Tprev = state
+
+            T, logw = update_temp_and_compute_logw(state)
+            jax.debug.print("T: {}", T)
+
+            # L *= jnp.sqrt(T / Tprev)
+            # eps *= jnp.sqrt(T / Tprev)
+
+            
+
+            eps_in_si = 2.0*scipy.constants.femto * jnp.sqrt(3 * 688 * scipy.constants.k * (T/0.001987191))
+            si_to_gmol = jnp.sqrt(1000*scipy.constants.Avogadro)/scipy.constants.angstrom
+            eps = eps_in_si * si_to_gmol
+            L = eps*30
+
+            jax.debug.print("eps: {}", eps)
+            jax.debug.print("L: {}", L)
+
+            x, u, l, g, key, L, eps, T = resample_particles(logw, x, u, l, g, key, L, eps, T)
+
+            (x, u, l, g, key, L, eps), xs = self.sample_temp_level(steps_at_each_temp, tune_steps, x, u, l, g, key, L, eps, T)
+
+            #jax.debug.print("logl_next: {}", l[0])
+
+            return (x, u, l, g, key, L, eps, T), xs
+
+        
+        # do the sampling and return the final x of all the chains
+        # return jax.lax.while_loop(cond_fun=not_terminate, 
+        #                           body_fun=temp_level, 
+        #                           init_val=(x0, u0, l0, g0, key0, self.L, self.eps_initial, T0)
+        #                          )[0]
+
+        return jax.lax.scan(lambda c, a: temp_level(c), init= (x0, u0, l0, g0, key0, self.L, self.eps_initial, T0), xs= jnp.ones(20,))[1]
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+class AnnealingSampler:
+    """Ensamble MCHMC (q = 0 Hamiltonian) sampler"""
+
+    def __init__(self, Target, shift_fn, masses, alpha = 1.0, varE_wanted = 1e-4):
+        """Args:
+                Target: the target distribution class.
+                alpha: the momentum decoherence scale L = alpha sqrt(d). Optimal alpha is typically around 1, but can also be 10 or so.
+                varE_wanted: controls the stepsize after the burn-in. We aim for Var[E] / d = 'varE_wanted'.
+        """
+
+        self.Target = vmap_target(Target)
+        self.original_target = Target
+        self.masses = masses
+
+        self.alpha = alpha
+        self.L = jnp.sqrt(self.Target.d) * alpha
+        self.varEwanted = varE_wanted
+        self.shift_fn = shift_fn
+
+        self.grad_evals_per_step = 1.0 # per chain (leapfrog)
+
+        self.eps_initial = jnp.sqrt(self.Target.d)    # this will be changed during the burn-in
+
+
+    def random_unit_vector(self, random_key, num_chains):
+        """Generates a random (isotropic) unit vector."""
+        key, subkey = jax.random.split(random_key)
+        u = jax.random.normal(subkey, shape = (num_chains, self.Target.d), dtype = 'float64')
+        normed_u = u / jnp.sqrt(jnp.sum(jnp.square(u), axis = 1))[:, None]
+        return normed_u, key
+
+
+    def partially_refresh_momentum(self, u, random_key, nu):
+        """Adds a small noise to u and normalizes."""
+        key, subkey = jax.random.split(random_key)
+        noise = nu * jax.random.normal(subkey, shape= u.shape, dtype=u.dtype)
+
+        return (u + noise) / jnp.sqrt(jnp.sum(jnp.square(u + noise), axis = 1))[:, None], key
+
+
+
+    def update_momentum(self, eps, g, u):
+        """The momentum updating map of the esh dynamics (see https://arxiv.org/pdf/2111.02434.pdf)
+        similar to the implementation: https://github.com/gregversteeg/esh_dynamics
+        There are no exponentials e^delta, which prevents overflows when the gradient norm is large."""
+        g_norm = jnp.sqrt(jnp.sum(jnp.square(g), axis=1)).T
+        nonzero = g_norm > 1e-13  # if g_norm is zero (we are at the MAP solution) we also want to set e to zero and the function will return u
+        inv_g_norm = jnp.nan_to_num(1.0 / g_norm) * nonzero
+        e = - g * inv_g_norm[:, None]
+        ue = jnp.sum(u * e, axis=1)
+        delta = eps * g_norm / (self.Target.d - 1)
+        zeta = jnp.exp(-delta)
+        uu = e * ((1 - zeta) * (1 + zeta + ue * (1 - zeta)))[:, None] + 2 * zeta[:, None] * u
+        delta_r = delta - jnp.log(2) + jnp.log(1 + ue + (1 - ue) * zeta ** 2)
+        return uu / (jnp.sqrt(jnp.sum(jnp.square(uu), axis=1)).T)[:, None], delta_r
+
+
+    # def hamiltonian_dynamics(self, x, u, g, eps, T):
+    #     """leapfrog"""
+
+    #     # half step in momentum
+    #     uu, delta_r1 = jax.vmap(update_momentum(self.Target.d, eps * 0.5))(u, g)
+
+    #     # full step in x
+    #     xx = self.shift_fn(x, eps * uu)
+    #     l, gg = self.Target.grad_nlogp(xx)
+    #     l, gg = l/T, gg/T
+
+    #     # half step in momentum
+    #     uu, delta_r2 = self.update_momentum(eps * 0.5, gg, uu)
+    #     kinetic_change = (delta_r1 + delta_r2) * (self.Target.d-1)
+
+    #     return xx, uu, l, gg, kinetic_change
+
+
+    def dynamics(self, x, u, g, random_key, L, eps, T):
+        """One step of the generalized dynamics."""
+
+        def energy_at_temperature(x):
+           l, g = self.original_target.grad_nlogp(x)
+           return l/T, g/T
+
+
+        # jax.debug.print("eps {}\n, sigma ={}\n, grad_nlogp(1)={}\n, x {}", eps, 1/jnp.sqrt(self.masses), energy_at_temperature(x), x)
+              
+        hd = jax.vmap(minimal_norm(d=self.Target.d, shift=self.shift_fn, grad_nlogp=energy_at_temperature, eps=eps, sigma=1/jnp.sqrt(self.masses)))
+
+        # Hamiltonian step
+        xx, uu, ll, gg, kinetic_change = hd(x=x,u=u,g=g/T)
+        # jax.debug.print("ll {}", ll)
+        # self.hamiltonian_dynamics(x, u, g/T, eps, T)
+        ll, gg = ll * T,  gg * T
+        # jax.debug.print("\n\n\nll 2 {}\n\n\n", ll)
+        # hd(x=x,u=u,g=g)
+
+        # bounce
+        nu = jnp.sqrt((jnp.exp(2 * eps / L) - 1.0) / self.Target.d)
+        uu, key = self.partially_refresh_momentum(uu, random_key, nu)
 
         return xx, uu, ll, gg, kinetic_change, key
 
@@ -2448,103 +2714,91 @@ class SMCSampler:
 
 
 
-    def sample_temp_level(self, num_steps, tune_steps, x0, u0, l0, g0, key0, L0, eps0, T):
+    def sample_temp_level(self, num_steps, tune_steps, x0, u0, l0, g0, E0, key0, L0, eps0, T):
 
 
         def step(state, tune):
 
-            x, u, l, g, key, L, eps = state 
+            x, u, l, g, E, key, L, eps = state 
+            # jax.debug.print("l {}", l)
             x, u, ll, g, kinetic_change, key = self.dynamics(x, u, g, key, L, eps, T)  # update particles by one step
+            # jax.debug.print("ll {}", ll)
 
+
+            # jax.debug.print("kinetic change: {}", kinetic_change)            
+            # jax.debug.print("E: {}", E)            
 
             ### eps tuning ###
-            de = jnp.square(kinetic_change + ll - l) / self.Target.d #square energy error per dimension
-            varE = jnp.average(de) #averaged over the ensamble
+            # de = jnp.square(kinetic_change + (ll - l)/T) / self.Target.d
+            # varE = jnp.average(de) #averaged over the ensamble
 
-                                #if we are in the tuning phase            #else
-            eps *= (tune * jnp.power(varE / self.varEwanted, -1./6.) + (1-tune))
+            #                     #if we are in the tuning phase            #else
+            # eps *= (tune * jnp.power(varE / self.varEwanted, -1./6.) + (1-tune))
 
 
-            ### L tuning ###
-            #typical width of the posterior
-            moment1 = jnp.average(x, axis=0)
-            moment2 = jnp.average(jnp.square(x), axis = 0)
-            var= moment2 - jnp.square(moment1)
-            sig = jnp.sqrt(jnp.average(var)) # average over dimensions (= typical width of the posterior)
+            # ### L tuning ###
+            # #typical width of the posterior
+            # moment1 = jnp.average(x, axis=0)
+            # moment2 = jnp.average(jnp.square(x), axis = 0)
+            # var= moment2 - jnp.square(moment1)
+            # sig = jnp.sqrt(jnp.average(var)) # average over dimensions (= typical width of the posterior)
 
-            Lnew = self.alpha * sig * jnp.sqrt(self.Target.d)
-            L = tune * Lnew + (1-tune) * L #update L if we are in the tuning phase
+            # Lnew = self.alpha * sig * jnp.sqrt(self.Target.d)
+            # L = tune * Lnew + (1-tune) * L #update L if we are in the tuning phase
             
+            # jax.debug.print("E {}, kinetic {}, ll {}, l {}", E.shape, kinetic_change.shape, ll.shape, l.shape)
+            # print(f"E {E.shape},l { l.shape}",)
 
-            return (x, u, ll, g, key, L, eps), None
+            EE = E + kinetic_change + (ll - l)/T
+
+            return (x, u, ll, g, EE, key, L, eps), (x, EE)
 
 
                                                 #tuning                     #no tuning
         tune_schedule = jnp.concatenate((jnp.ones(tune_steps), jnp.zeros(num_steps - tune_steps)))
 
-        return jax.lax.scan(step, init= (x0, u0, l0, g0, key0, L0, eps0), xs= tune_schedule, length= num_steps)[0]
+        return jax.lax.scan(step, init= (x0, u0, l0, g0, E0, key0, L0, eps0), xs= tune_schedule, length= num_steps)
 
 
 
 
-    def sample(self, steps_at_each_temp, tune_steps, num_chains, temp_init, temp_final, ess, x_initial= 'prior', random_key= None):
+    def sample(self, steps_at_each_temp, tune_steps, num_chains, temp_schedule, x_initial= 'prior', random_key= None):
 
         x0, u0, l0, g0, key0 = self.initialize(random_key, x_initial, num_chains) #initialize the chains
 
-        T0 = temp_init
-
-        def not_terminate(state):
-            x, u, l, g, key, L, eps, Tprev = state
-            return jnp.abs(Tprev-temp_final) > 1e-2
-        
-        def update_temp_and_compute_logw(state):
-            x, u, l, g, key, L, eps, Tprev = state
-
-            def solve_ess(beta):
-                logw = -(beta - 1.0/Tprev) * l 
-                weights = jnp.exp(logw - jax.scipy.special.logsumexp(logw))
-                #jax.debug.print("estimate: {}, ess: {}", 1.0 / jnp.sum(weights**2) / len(weights), ess)
-                return ess * len(weights) - 1.0 / jnp.sum(weights**2)
-
-            beta = bisection(solve_ess, 1.0/Tprev, 1.0/temp_final)
-            T = 1.0 / beta
-
-            logw = -(beta - 1.0/Tprev) * l
-
-            return T, logw
-        
-        def resample_particles(logw, x, u, l, g, key, L, eps, T):
-
-            indices, key = systematic_resampling(logw, key)
-
-            x_resampled = jnp.take(x, indices, axis=0)
-            u_resampled = jnp.take(u, indices, axis=0)
-            l_resampled = jnp.take(l, indices)
-            g_resampled = jnp.take(g, indices, axis=0)
-
-            return (x_resampled, u_resampled, l_resampled, g_resampled, key, L, eps, T)
+        temp_schedule_ext = jnp.insert(temp_schedule, 0, temp_schedule[0]) # as if the temp level before the first temp level was the same
 
 
-        def temp_level(state):
-            x, u, l, g, key, L, eps, Tprev = state
+        def temp_level(state, iter):
+            x, u, l, g, E, key, L, eps = state
+            T, Tprev = temp_schedule_ext[iter], temp_schedule_ext[iter-1]
+            logw = -(1.0/T - 1.0/Tprev) * l
+            
+            # L *= jnp.sqrt(T / Tprev)
+            # eps *= jnp.sqrt(T / Tprev)
 
-            T, logw = update_temp_and_compute_logw(state)
-            jax.debug.print("T: {}", T)
+            eps_in_si = 2*scipy.constants.femto * jnp.sqrt(3 * 688 * scipy.constants.k * (T/0.001987191))
+            si_to_gmol = jnp.sqrt(1000*scipy.constants.Avogadro)/scipy.constants.angstrom
+            eps = eps_in_si * si_to_gmol
+            L = 30*eps
 
-            L *= jnp.sqrt(T / Tprev)
-            eps *= jnp.sqrt(T / Tprev)
+            jax.debug.print("eps: {}, L: {}", eps, L)
 
             x, u, l, g, key, L, eps, T = resample_particles(logw, x, u, l, g, key, L, eps, T)
 
-            x, u, l, g, key, L, eps = self.sample_temp_level(steps_at_each_temp, tune_steps, x, u, l, g, key, L, eps, T)
 
-            #jax.debug.print("logl_next: {}", l[0])
 
-            return (x, u, l, g, key, L, eps, T)
+            next_state, (xs, EE) = self.sample_temp_level(steps_at_each_temp, tune_steps, x, u, l, g, E, key, L, eps, T)
+
+            return next_state, (xs, EE)
+
+            # return self.sample_temp_level(steps_at_each_temp, tune_steps, x, u, l, g, key, L, eps, T), None
 
         
         # do the sampling and return the final x of all the chains
-        return jax.lax.while_loop(cond_fun=not_terminate, 
-                                  body_fun=temp_level, 
-                                  init_val=(x0, u0, l0, g0, key0, self.L, self.eps_initial, T0)
-                                 )[0]
+        # return jax.lax.scan(temp_level, init= (x0, u0, l0, g0, key0, self.L, self.eps_initial), xs= jnp.arange(1, len(temp_schedule_ext)))[0][0]
+
+        # jax.debug.print("x {}\n\n", x0)
+
+        return jax.lax.scan(temp_level, init= (x0, u0, l0, g0, jnp.zeros(x0.shape[0]), key0, self.L, self.eps_initial), xs= jnp.arange(1, len(temp_schedule_ext)))[1]
+        
